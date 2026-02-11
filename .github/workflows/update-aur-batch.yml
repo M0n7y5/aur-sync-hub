@@ -26,6 +26,10 @@ on:
         description: "Optional updater concurrency override"
         required: false
         type: string
+      force_publish_packages:
+        description: "Optional comma/space separated packages to publish even when updater finds no version changes"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -113,6 +117,40 @@ jobs:
           useradd -m -U updater || true
           chown -R updater:updater "$GITHUB_WORKSPACE"
           runuser -u updater -- env GH_TOKEN="$GH_TOKEN" GITHUB_TOKEN="$GITHUB_TOKEN" "$UPDATER_BIN_PATH" "${ARGS[@]}"
+
+      - name: Force publish selected packages
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.force_publish_packages != ''
+        shell: bash
+        env:
+          FORCE_PACKAGES: ${{ github.event.inputs.force_publish_packages }}
+        run: |
+          set -euo pipefail
+          useradd -m -U updater || true
+          chown -R updater:updater "$GITHUB_WORKSPACE"
+          touch .changed-packages
+
+          normalized="$(printf '%s' "$FORCE_PACKAGES" | tr ',\n' '  ')"
+          for pkg in $normalized; do
+            pkg="$(printf '%s' "$pkg" | xargs)"
+            [[ -n "$pkg" ]] || continue
+
+            pkgdir="$GITHUB_WORKSPACE/packages/$pkg"
+            if [[ ! -d "$pkgdir" ]]; then
+              echo "Requested force-publish package '$pkg' does not exist under packages/" >&2
+              exit 1
+            fi
+
+            if [[ ! -f "$pkgdir/PKGBUILD" ]]; then
+              echo "Requested force-publish package '$pkg' is missing PKGBUILD" >&2
+              exit 1
+            fi
+
+            runuser -u updater -- bash -lc "cd '$pkgdir' && makepkg --printsrcinfo > .SRCINFO"
+            echo "$pkg" >> .changed-packages
+          done
+
+          sort -u -o .changed-packages .changed-packages
+          echo "Forced publish packages: $(paste -sd ',' .changed-packages)"
 
       - name: Detect changed packages
         id: changes
