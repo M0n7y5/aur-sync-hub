@@ -36,10 +36,29 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      image_core: ${{ steps.images.outputs.image_core }}
+      image_push: ${{ steps.images.outputs.image_push }}
+    steps:
+      - name: Resolve lowercase container images
+        id: images
+        shell: bash
+        run: |
+          owner="${OWNER,,}"
+          echo "image_core=${IMAGE_CORE:-ghcr.io/${owner}/aur-sync-hub-runtime-core:latest}" >> "$GITHUB_OUTPUT"
+          echo "image_push=${IMAGE_PUSH:-ghcr.io/${owner}/aur-sync-hub-runtime:latest}" >> "$GITHUB_OUTPUT"
+        env:
+          OWNER: ${{ github.repository_owner }}
+          IMAGE_CORE: ${{ vars.AUR_SYNC_CONTAINER_IMAGE_CORE }}
+          IMAGE_PUSH: ${{ vars.AUR_SYNC_CONTAINER_IMAGE }}
+
   compute:
+    needs: prepare
     runs-on: ubuntu-latest
     container:
-      image: ${{ vars.AUR_SYNC_CONTAINER_IMAGE_CORE || format('ghcr.io/{0}/aur-sync-hub-runtime-core:latest', github.repository_owner) }}
+      image: ${{ needs.prepare.outputs.image_core }}
     outputs:
       mode: ${{ steps.mode.outputs.mode }}
       has_changes: ${{ steps.changes.outputs.has_changes }}
@@ -125,11 +144,11 @@ jobs:
         run: echo "No package updates detected"
 
   publish:
-    needs: compute
+    needs: [prepare, compute]
     if: needs.compute.outputs.has_changes == 'true' && !(github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true')
     runs-on: ubuntu-latest
     container:
-      image: ${{ vars.AUR_SYNC_CONTAINER_IMAGE || format('ghcr.io/{0}/aur-sync-hub-runtime:latest', github.repository_owner) }}
+      image: ${{ needs.prepare.outputs.image_push }}
     env:
       GH_TOKEN: ${{ github.token }}
       GITHUB_TOKEN: ${{ github.token }}

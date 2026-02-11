@@ -18,10 +18,26 @@ on:
         type: string
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      image_core: ${{ steps.images.outputs.image_core }}
+    steps:
+      - name: Resolve lowercase container image
+        id: images
+        shell: bash
+        run: |
+          owner="${OWNER,,}"
+          echo "image_core=${IMAGE_CORE:-ghcr.io/${owner}/aur-sync-hub-runtime-core:latest}" >> "$GITHUB_OUTPUT"
+        env:
+          OWNER: ${{ github.repository_owner }}
+          IMAGE_CORE: ${{ vars.AUR_SYNC_CONTAINER_IMAGE_CORE }}
+
   discover:
+    needs: prepare
     runs-on: ubuntu-latest
     container:
-      image: ${{ vars.AUR_SYNC_CONTAINER_IMAGE_CORE || format('ghcr.io/{0}/aur-sync-hub-runtime-core:latest', github.repository_owner) }}
+      image: ${{ needs.prepare.outputs.image_core }}
     outputs:
       packages_json: ${{ steps.discover.outputs.packages_json }}
       has_packages: ${{ steps.discover.outputs.has_packages }}
@@ -91,11 +107,11 @@ jobs:
           fi
 
   verify:
-    needs: discover
+    needs: [prepare, discover]
     if: needs.discover.outputs.has_packages == 'true'
     runs-on: ubuntu-latest
     container:
-      image: ${{ vars.AUR_SYNC_CONTAINER_IMAGE_CORE || format('ghcr.io/{0}/aur-sync-hub-runtime-core:latest', github.repository_owner) }}
+      image: ${{ needs.prepare.outputs.image_core }}
     strategy:
       fail-fast: false
       matrix:
