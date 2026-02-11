@@ -212,8 +212,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git config user.name "aur-sync-hub[bot]"
-          git config user.email "aur-sync-hub[bot]@users.noreply.github.com"
+          git config --global user.name "aur-sync-hub[bot]"
+          git config --global user.email "aur-sync-hub[bot]@users.noreply.github.com"
 
       - name: Commit and push manager repo directly
         if: needs.compute.outputs.mode == 'direct-push'
