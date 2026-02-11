@@ -212,6 +212,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git config --global user.name "aur-sync-hub[bot]"
           git config --global user.email "aur-sync-hub[bot]@users.noreply.github.com"
 
