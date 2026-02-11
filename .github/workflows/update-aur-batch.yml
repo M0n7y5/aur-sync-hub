@@ -133,8 +133,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: updater-output
+          include-hidden-files: true
           path: |
-            packages
+            packages/*/PKGBUILD
+            packages/*/.SRCINFO
+            packages/*/updater.yaml
             .changed-packages
           if-no-files-found: error
           retention-days: 1
