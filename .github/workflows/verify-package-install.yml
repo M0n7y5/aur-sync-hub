@@ -1,15 +1,6 @@
 name: Verify Package Install
 
 on:
-  pull_request:
-    paths:
-      - "packages/**"
-      - "src/AurSync.Updater/**"
-      - "scripts/test_local_install.sh"
-      - "docker/runtime.Dockerfile"
-      - ".github/workflows/verify-package-install.yml"
-      - ".github/workflows/update-aur-batch.yml"
-      - ".github/workflows/build-runtime-image.yml"
   workflow_dispatch:
     inputs:
       package:
