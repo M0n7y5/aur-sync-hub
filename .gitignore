@@ -1,0 +1,5 @@
+.changed-packages
+**/.changed-packages
+**/bin/
+**/obj/
+artifacts/

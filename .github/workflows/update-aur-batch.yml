@@ -1,0 +1,291 @@
+name: Update AUR Batch
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Update mode"
+        required: true
+        default: "direct-push"
+        type: choice
+        options:
+          - pr-first
+          - direct-push
+      package:
+        description: "Optional single package filter"
+        required: false
+        type: string
+      dry_run:
+        description: "Compute updates without writing changes"
+        required: false
+        default: false
+        type: boolean
+      max_concurrency:
+        description: "Optional updater concurrency override"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: aur-sync-batch
+  cancel-in-progress: false
+
+jobs:
+  compute:
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ vars.AUR_SYNC_CONTAINER_IMAGE_CORE || format('ghcr.io/{0}/aur-sync-hub-runtime-core:latest', github.repository_owner) }}
+    outputs:
+      mode: ${{ steps.mode.outputs.mode }}
+      has_changes: ${{ steps.changes.outputs.has_changes }}
+      changed_csv: ${{ steps.changes.outputs.changed_csv }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+      UPDATER_BIN: ${{ vars.AUR_SYNC_UPDATER_BIN || 'aur-sync-updater' }}
+    steps:
+      - name: Checkout manager repo
+        uses: actions/checkout@v4
+
+      - name: Verify updater binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v "$UPDATER_BIN"
+
+      - name: Resolve run mode
+        id: mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            MODE="${{ github.event.inputs.mode }}"
+          else
+            MODE="${{ vars.AUR_SYNC_MODE || 'direct-push' }}"
+          fi
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "Resolved mode: $MODE"
+
+      - name: Run updater
+        shell: bash
+        env:
+          PACKAGE_FILTER: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.package || '' }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run || 'false' }}
+          MAX_CONCURRENCY: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.max_concurrency || vars.AUR_SYNC_MAX_CONCURRENCY || '' }}
+        run: |
+          set -euo pipefail
+          UPDATER_BIN_PATH="$(command -v "$UPDATER_BIN")"
+          ARGS=(--packages-root "$GITHUB_WORKSPACE/packages" --changed-file "$GITHUB_WORKSPACE/.changed-packages")
+          if [[ -n "${PACKAGE_FILTER}" ]]; then
+            ARGS+=(--package-filter "$PACKAGE_FILTER")
+          fi
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            ARGS+=(--dry-run)
+          fi
+          if [[ -n "${MAX_CONCURRENCY}" ]]; then
+            ARGS+=(--max-concurrency "$MAX_CONCURRENCY")
+          fi
+
+          useradd -m -U updater || true
+          chown -R updater:updater "$GITHUB_WORKSPACE"
+          runuser -u updater -- env GH_TOKEN="$GH_TOKEN" GITHUB_TOKEN="$GITHUB_TOKEN" "$UPDATER_BIN_PATH" "${ARGS[@]}"
+
+      - name: Detect changed packages
+        id: changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -s .changed-packages ]]; then
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            CHANGED_CSV="$(paste -sd ',' .changed-packages)"
+            echo "changed_csv=$CHANGED_CSV" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "changed_csv=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload updater outputs
+        if: steps.changes.outputs.has_changes == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: updater-output
+          path: |
+            packages
+            .changed-packages
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: No-op message when unchanged
+        if: steps.changes.outputs.has_changes != 'true'
+        run: echo "No package updates detected"
+
+  publish:
+    needs: compute
+    if: needs.compute.outputs.has_changes == 'true' && !(github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true')
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ vars.AUR_SYNC_CONTAINER_IMAGE || format('ghcr.io/{0}/aur-sync-hub-runtime:latest', github.repository_owner) }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout manager repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Clear package tree before artifact restore
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf packages .changed-packages
+
+      - name: Download updater outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: updater-output
+          path: ${{ github.workspace }}
+
+      - name: Build changed package markdown
+        id: changedmd
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -s .changed-packages ]]; then
+            {
+              echo "changed_md<<EOF"
+              while IFS= read -r pkg; do
+                [[ -n "$pkg" ]] && echo "- $pkg"
+              done < .changed-packages
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo "changed_md<<EOF"
+              echo "- None"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure git identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "aur-sync-hub[bot]"
+          git config user.email "aur-sync-hub[bot]@users.noreply.github.com"
+
+      - name: Commit and push manager repo directly
+        if: needs.compute.outputs.mode == 'direct-push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add packages
+          if git diff --cached --quiet; then
+            echo "No git diff after applying updater output"
+            exit 0
+          fi
+          git commit -m "chore(sync): batch AUR package update"
+          git push origin HEAD:main
+
+      - name: Open PR with manager repo changes
+        if: needs.compute.outputs.mode == 'pr-first'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: chore/aur-sync-${{ github.run_id }}
+          delete-branch: true
+          commit-message: "chore(sync): batch AUR package update"
+          title: "chore(sync): batch AUR package update"
+          body: |
+            ## Summary
+            - Automatic batch update run detected new upstream versions.
+            - Updated package metadata in manager repo.
+
+            ## Changed packages
+            ${{ steps.changedmd.outputs.changed_md }}
+
+      - name: Require AUR key for direct mode
+        if: needs.compute.outputs.mode == 'direct-push'
+        shell: bash
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${AUR_SSH_PRIVATE_KEY}" ]]; then
+            echo "AUR_SSH_PRIVATE_KEY is required for direct-push mode" >&2
+            exit 1
+          fi
+
+      - name: Configure AUR SSH key
+        if: needs.compute.outputs.mode == 'direct-push'
+        shell: bash
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Push changed package folders to AUR
+        if: needs.compute.outputs.mode == 'direct-push'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          while IFS= read -r pkg; do
+            [[ -n "$pkg" ]] || continue
+
+            cfg="packages/$pkg/updater.yaml"
+            if [[ ! -f "$cfg" ]]; then
+              echo "Skipping $pkg: missing updater.yaml"
+              continue
+            fi
+
+            aur_name="$(awk -F: "
+              /^[[:space:]]*aur_package[[:space:]]*:/ {
+                v=\$0
+                sub(/^[[:space:]]*aur_package[[:space:]]*:[[:space:]]*/, \"\", v)
+                sub(/[[:space:]]+#.*/, \"\", v)
+                gsub(/^[[:space:]\"']+|[[:space:]\"']+$/, \"\", v)
+                print v
+                exit
+              }
+            " "$cfg")"
+            if [[ -z "$aur_name" ]]; then
+              aur_name="$pkg"
+            fi
+
+            tmpdir="$(mktemp -d)"
+            trap 'rm -rf "$tmpdir"' EXIT
+
+            git clone "ssh://aur@aur.archlinux.org/${aur_name}.git" "$tmpdir/aur"
+            rsync -a --delete --exclude ".git" "packages/$pkg/" "$tmpdir/aur/"
+
+            pushd "$tmpdir/aur" >/dev/null
+            if [[ -z "$(git status --porcelain)" ]]; then
+              echo "No AUR changes for $aur_name"
+              popd >/dev/null
+              rm -rf "$tmpdir"
+              trap - EXIT
+              continue
+            fi
+
+            pkgver="$(awk -F= '/^pkgver=/{print $2; exit}' PKGBUILD)"
+            pkgrel="$(awk -F= '/^pkgrel=/{print $2; exit}' PKGBUILD)"
+            git add -A
+            git commit -m "upgpkg: ${aur_name} ${pkgver}-${pkgrel}"
+            GIT_SSH_COMMAND='ssh -i ~/.ssh/aur -o IdentitiesOnly=yes' git push
+            popd >/dev/null
+
+            rm -rf "$tmpdir"
+            trap - EXIT
+            echo "Published $aur_name to AUR"
+          done < .changed-packages

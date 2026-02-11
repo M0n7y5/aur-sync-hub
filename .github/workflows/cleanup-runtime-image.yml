@@ -1,0 +1,115 @@
+name: Cleanup Runtime Image Tags
+
+on:
+  schedule:
+    - cron: "43 3 * * 0"
+  workflow_dispatch:
+    inputs:
+      keep_sha_versions:
+        description: "Number of SHA-tagged versions to keep"
+        required: false
+        default: "20"
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete old GHCR runtime versions
+        uses: actions/github-script@v7
+        env:
+          KEEP_SHA_VERSIONS: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.keep_sha_versions || '20' }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const owner = context.repo.owner;
+            const packageNames = ['aur-sync-hub-runtime', 'aur-sync-hub-runtime-core'];
+            const keepShaVersions = Number(process.env.KEEP_SHA_VERSIONS || '20');
+
+            if (!Number.isInteger(keepShaVersions) || keepShaVersions < 1) {
+              throw new Error(`Invalid KEEP_SHA_VERSIONS: ${process.env.KEEP_SHA_VERSIONS}`);
+            }
+
+            const ownerInfo = await github.request('GET /users/{username}', {
+              username: owner,
+            });
+
+            const isOrg = ownerInfo.data.type === 'Organization';
+            const ownerParams = isOrg ? { org: owner } : { username: owner };
+
+            const listRoute = isOrg
+              ? 'GET /orgs/{org}/packages/container/{package_name}/versions'
+              : 'GET /users/{username}/packages/container/{package_name}/versions';
+
+            const deleteRoute = isOrg
+              ? 'DELETE /orgs/{org}/packages/container/{package_name}/versions/{package_version_id}'
+              : 'DELETE /users/{username}/packages/container/{package_name}/versions/{package_version_id}';
+
+            const shaTagRegex = /^[0-9a-f]{40}$/;
+
+            for (const packageName of packageNames) {
+              let versions;
+              try {
+                versions = await github.paginate(listRoute, {
+                  ...ownerParams,
+                  package_name: packageName,
+                  per_page: 100,
+                });
+              } catch (error) {
+                if (error.status === 404) {
+                  core.info(`Package '${packageName}' not found for owner '${owner}', skipping.`);
+                  continue;
+                }
+
+                throw error;
+              }
+
+              core.info(`[${packageName}] Found ${versions.length} package version(s).`);
+
+              const deletableCandidates = versions
+                .filter((version) => {
+                  const tags = version.metadata?.container?.tags ?? [];
+
+                  if (tags.includes('latest')) {
+                    return false;
+                  }
+
+                  if (tags.length === 0) {
+                    return true;
+                  }
+
+                  return tags.every((tag) => shaTagRegex.test(tag));
+                })
+                .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+
+              const idsToKeep = new Set(
+                deletableCandidates
+                  .slice(0, keepShaVersions)
+                  .map((version) => version.id),
+              );
+
+              const versionsToDelete = deletableCandidates.filter((version) => !idsToKeep.has(version.id));
+
+              core.info(
+                `[${packageName}] Keeping ${Math.min(deletableCandidates.length, keepShaVersions)} SHA/untagged version(s); deleting ${versionsToDelete.length}.`,
+              );
+
+              for (const version of versionsToDelete) {
+                const tags = version.metadata?.container?.tags ?? [];
+                await github.request(deleteRoute, {
+                  ...ownerParams,
+                  package_name: packageName,
+                  package_version_id: version.id,
+                });
+
+                core.info(
+                  `[${packageName}] Deleted package version id=${version.id}, updated_at=${version.updated_at}, tags=${tags.join(',') || '(untagged)'}`,
+                );
+              }
+            }
+
+            core.info('Cleanup complete.');

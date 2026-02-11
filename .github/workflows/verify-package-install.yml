@@ -1,0 +1,112 @@
+name: Verify Package Install
+
+on:
+  pull_request:
+    paths:
+      - "packages/**"
+      - "src/AurSync.Updater/**"
+      - "scripts/test_local_install.sh"
+      - "docker/runtime.Dockerfile"
+      - ".github/workflows/verify-package-install.yml"
+      - ".github/workflows/update-aur-batch.yml"
+      - ".github/workflows/build-runtime-image.yml"
+  workflow_dispatch:
+    inputs:
+      package:
+        description: "Optional single package filter"
+        required: false
+        type: string
+
+jobs:
+  verify:
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.package == '' || github.event.inputs.package == matrix.package }}
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ vars.AUR_SYNC_CONTAINER_IMAGE_CORE || format('ghcr.io/{0}/aur-sync-hub-runtime-core:latest', github.repository_owner) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - csharpier
+          - plasticity-bin
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+      UPDATER_BIN: ${{ vars.AUR_SYNC_UPDATER_BIN || 'aur-sync-updater' }}
+    steps:
+      - name: Checkout manager repo
+        uses: actions/checkout@v4
+
+      - name: Verify updater binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v "$UPDATER_BIN"
+
+      - name: Install package build toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          pacman -Syu --noconfirm --needed base-devel
+
+      - name: Prepare temp copy and update package
+        shell: bash
+        run: |
+          set -euo pipefail
+          updater_bin_path="$(command -v "$UPDATER_BIN")"
+          pkg="${{ matrix.package }}"
+          tmpdir="$(mktemp -d)"
+          cp -a "$GITHUB_WORKSPACE/packages/$pkg" "$tmpdir/"
+          useradd -m -U builder || true
+          chown -R builder:builder "$tmpdir"
+          runuser -u builder -- env GH_TOKEN="$GH_TOKEN" GITHUB_TOKEN="$GITHUB_TOKEN" "$updater_bin_path" \
+            --packages-root "$tmpdir" \
+            --package-filter "$pkg" \
+            --max-concurrency 1 \
+            --changed-file "$tmpdir/.changed-packages"
+          echo "PKG=$pkg" >> "$GITHUB_ENV"
+          echo "TMPDIR_PATH=$tmpdir" >> "$GITHUB_ENV"
+
+      - name: Build package as non-root
+        shell: bash
+        run: |
+          set -euo pipefail
+          chown -R builder:builder "$TMPDIR_PATH"
+          runuser -u builder -- bash -lc "cd '$TMPDIR_PATH/$PKG' && makepkg -s --noconfirm"
+
+      - name: Install package artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkgdir="$TMPDIR_PATH/$PKG"
+          artifacts=()
+          shopt -s nullglob
+          for f in "$pkgdir"/*.pkg.tar.zst; do
+            case "$f" in
+              *-debug-*)
+                ;;
+              *)
+                artifacts+=("$f")
+                ;;
+            esac
+          done
+          shopt -u nullglob
+
+          if ((${#artifacts[@]} == 0)); then
+            echo "No installable package artifact found for $PKG" >&2
+            exit 1
+          fi
+
+          pacman -U --needed --noconfirm "${artifacts[@]}"
+
+      - name: Verify installed package
+        shell: bash
+        run: |
+          set -euo pipefail
+          pacman -Qi "$PKG"
+          if [[ "$PKG" == "csharpier" ]]; then
+            csharpier --version
+          fi
+          if [[ "$PKG" == "plasticity-bin" ]]; then
+            command -v plasticity
+          fi
