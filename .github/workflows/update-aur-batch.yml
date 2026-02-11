@@ -257,19 +257,6 @@ jobs:
           git config --global user.name "aur-sync-hub[bot]"
           git config --global user.email "aur-sync-hub[bot]@users.noreply.github.com"
 
-      - name: Commit and push manager repo directly
-        if: needs.compute.outputs.mode == 'direct-push'
-        shell: bash
-        run: |
-          set -euo pipefail
-          git add packages/*/PKGBUILD packages/*/.SRCINFO packages/*/updater.yaml
-          if git diff --cached --quiet; then
-            echo "No git diff after applying updater output"
-            exit 0
-          fi
-          git commit -m "chore(sync): batch AUR package update"
-          git push origin HEAD:main
-
       - name: Open PR with manager repo changes
         if: needs.compute.outputs.mode == 'pr-first'
         uses: peter-evans/create-pull-request@v6
@@ -309,7 +296,11 @@ jobs:
           chmod 700 ~/.ssh
           printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
           chmod 600 ~/.ssh/aur
-          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts
+          ssh-keyscan -H -t rsa,ecdsa,ed25519 aur.archlinux.org > ~/.ssh/known_hosts
+          if [[ ! -s ~/.ssh/known_hosts ]]; then
+            echo "Failed to fetch aur.archlinux.org host keys" >&2
+            exit 1
+          fi
           chmod 644 ~/.ssh/known_hosts
 
       - name: Push changed package folders to AUR
@@ -317,6 +308,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          ssh_cmd='ssh -i ~/.ssh/aur -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts'
 
           tmpdirs=()
           cleanup() { for d in "${tmpdirs[@]}"; do rm -rf "$d"; done; }
@@ -328,7 +321,7 @@ jobs:
             tmpdir="$(mktemp -d)"
             tmpdirs+=("$tmpdir")
 
-            git clone "ssh://aur@aur.archlinux.org/${aur_name}.git" "$tmpdir/aur"
+            GIT_SSH_COMMAND="$ssh_cmd" git clone "ssh://aur@aur.archlinux.org/${aur_name}.git" "$tmpdir/aur"
             rsync -a --delete --exclude ".git" "packages/$pkg/" "$tmpdir/aur/"
 
             pushd "$tmpdir/aur" >/dev/null
@@ -340,8 +333,21 @@ jobs:
 
             git add -A
             git commit -m "upgpkg: ${aur_name} ${pkgver}-${pkgrel}"
-            GIT_SSH_COMMAND='ssh -i ~/.ssh/aur -o IdentitiesOnly=yes' git push
+            GIT_SSH_COMMAND="$ssh_cmd" git push
             popd >/dev/null
 
             echo "Published $aur_name to AUR"
           done < .publish-plan
+
+      - name: Commit and push manager repo directly
+        if: needs.compute.outputs.mode == 'direct-push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add packages/*/PKGBUILD packages/*/.SRCINFO packages/*/updater.yaml
+          if git diff --cached --quiet; then
+            echo "No git diff after applying updater output"
+            exit 0
+          fi
+          git commit -m "chore(sync): batch AUR package update"
+          git push origin HEAD:main
