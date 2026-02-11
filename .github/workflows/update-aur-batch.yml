@@ -221,7 +221,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git add packages
+          git add packages/*/PKGBUILD packages/*/.SRCINFO packages/*/updater.yaml
           if git diff --cached --quiet; then
             echo "No git diff after applying updater output"
             exit 0

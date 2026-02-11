@@ -1,0 +1,12 @@
+# makepkg/updpkgsums downloaded sources and build artifacts
+*.tar.gz
+*.tar.xz
+*.tar.zst
+*.tar.bz2
+*.zip
+*.deb
+*.rpm
+*.pkg.tar.*
+*.log
+src/
+pkg/
