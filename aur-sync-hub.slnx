@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/AurSync.Updater/AurSync.Updater.csproj" />
+  <Project Path="src/AurSync.Updater.Tests/AurSync.Updater.Tests.csproj" />
+</Solution>

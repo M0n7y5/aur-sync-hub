@@ -18,17 +18,88 @@ on:
         type: string
 
 jobs:
+  discover:
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ vars.AUR_SYNC_CONTAINER_IMAGE_CORE || format('ghcr.io/{0}/aur-sync-hub-runtime-core:latest', github.repository_owner) }}
+    outputs:
+      packages_json: ${{ steps.discover.outputs.packages_json }}
+      has_packages: ${{ steps.discover.outputs.has_packages }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+      UPDATER_BIN: ${{ vars.AUR_SYNC_UPDATER_BIN || 'aur-sync-updater' }}
+    steps:
+      - name: Checkout manager repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify updater binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v "$UPDATER_BIN"
+
+      - name: Collect changed paths for pull requests
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > .changed-paths
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" > .changed-paths
+          fi
+
+      - name: Discover packages to verify
+        id: discover
+        shell: bash
+        env:
+          PACKAGE_FILTER: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.package || '' }}
+        run: |
+          set -euo pipefail
+          ARGS=(--discover-packages-json --packages-root "$GITHUB_WORKSPACE/packages")
+          if [[ -n "$PACKAGE_FILTER" ]]; then
+            ARGS+=(--package-filter "$PACKAGE_FILTER")
+          fi
+          if [[ -s .changed-paths ]]; then
+            ARGS+=(--changed-paths-file "$GITHUB_WORKSPACE/.changed-paths")
+          fi
+
+          PACKAGES_JSON="$($UPDATER_BIN "${ARGS[@]}")"
+          PACKAGES_JSON="$(printf '%s' "$PACKAGES_JSON" | tr -d '\r\n')"
+          if [[ -z "$PACKAGES_JSON" ]]; then
+            PACKAGES_JSON='[]'
+          fi
+
+          if [[ -n "$PACKAGE_FILTER" && "$PACKAGES_JSON" == '[]' ]]; then
+            echo "Requested package '$PACKAGE_FILTER' is not verifiable (missing package directory, PKGBUILD, or updater.yaml)" >&2
+            exit 1
+          fi
+
+          {
+            echo "packages_json<<EOF"
+            echo "$PACKAGES_JSON"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          if [[ "$PACKAGES_JSON" == '[]' ]]; then
+            echo "has_packages=false" >> "$GITHUB_OUTPUT"
+            echo "No verifiable packages selected"
+          else
+            echo "has_packages=true" >> "$GITHUB_OUTPUT"
+            echo "Packages to verify: $PACKAGES_JSON"
+          fi
+
   verify:
-    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.package == '' || github.event.inputs.package == matrix.package }}
+    needs: discover
+    if: needs.discover.outputs.has_packages == 'true'
     runs-on: ubuntu-latest
     container:
       image: ${{ vars.AUR_SYNC_CONTAINER_IMAGE_CORE || format('ghcr.io/{0}/aur-sync-hub-runtime-core:latest', github.repository_owner) }}
     strategy:
       fail-fast: false
       matrix:
-        package:
-          - csharpier
-          - plasticity-bin
+        package: ${{ fromJSON(needs.discover.outputs.packages_json) }}
     env:
       GH_TOKEN: ${{ github.token }}
       GITHUB_TOKEN: ${{ github.token }}
@@ -47,7 +118,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          pacman -Syu --noconfirm --needed base-devel
+          pacman -Sy --noconfirm --needed base-devel
 
       - name: Prepare temp copy and update package
         shell: bash
@@ -104,9 +175,24 @@ jobs:
         run: |
           set -euo pipefail
           pacman -Qi "$PKG"
-          if [[ "$PKG" == "csharpier" ]]; then
-            csharpier --version
+
+          yaml_file="$GITHUB_WORKSPACE/packages/$PKG/updater.yaml"
+          if [[ ! -f "$yaml_file" ]]; then
+            echo "No updater.yaml found, skipping custom verify commands"
+            exit 0
           fi
-          if [[ "$PKG" == "plasticity-bin" ]]; then
-            command -v plasticity
+
+          # Parse verify_commands list from updater.yaml (lightweight awk, no yq dependency)
+          mapfile -t verify_cmds < <(
+            awk '/^verify_commands:/{found=1; next} found && /^  - /{sub(/^  - /, ""); print; next} found{exit}' "$yaml_file"
+          )
+
+          if (( ${#verify_cmds[@]} == 0 )); then
+            echo "No verify_commands defined, skipping"
+            exit 0
           fi
+
+          for cmd in "${verify_cmds[@]}"; do
+            echo "Running verify command: $cmd"
+            eval "$cmd"
+          done

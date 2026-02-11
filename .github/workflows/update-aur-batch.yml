@@ -133,11 +133,18 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GITHUB_TOKEN: ${{ github.token }}
+      UPDATER_BIN: ${{ vars.AUR_SYNC_UPDATER_BIN || 'aur-sync-updater' }}
     steps:
       - name: Checkout manager repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Verify updater binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v "$UPDATER_BIN"
 
       - name: Clear package tree before artifact restore
         shell: bash
@@ -171,6 +178,16 @@ jobs:
               echo "EOF"
             } >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Build publish plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$UPDATER_BIN" \
+            --build-publish-plan \
+            --packages-root "$GITHUB_WORKSPACE/packages" \
+            --changed-file "$GITHUB_WORKSPACE/.changed-packages" \
+            --publish-plan-file "$GITHUB_WORKSPACE/.publish-plan"
 
       - name: Configure git identity
         shell: bash
@@ -240,31 +257,15 @@ jobs:
         run: |
           set -euo pipefail
 
-          while IFS= read -r pkg; do
+          tmpdirs=()
+          cleanup() { for d in "${tmpdirs[@]}"; do rm -rf "$d"; done; }
+          trap cleanup EXIT
+
+          while IFS=$'\t' read -r pkg aur_name pkgver pkgrel; do
             [[ -n "$pkg" ]] || continue
 
-            cfg="packages/$pkg/updater.yaml"
-            if [[ ! -f "$cfg" ]]; then
-              echo "Skipping $pkg: missing updater.yaml"
-              continue
-            fi
-
-            aur_name="$(awk -F: "
-              /^[[:space:]]*aur_package[[:space:]]*:/ {
-                v=\$0
-                sub(/^[[:space:]]*aur_package[[:space:]]*:[[:space:]]*/, \"\", v)
-                sub(/[[:space:]]+#.*/, \"\", v)
-                gsub(/^[[:space:]\"']+|[[:space:]\"']+$/, \"\", v)
-                print v
-                exit
-              }
-            " "$cfg")"
-            if [[ -z "$aur_name" ]]; then
-              aur_name="$pkg"
-            fi
-
             tmpdir="$(mktemp -d)"
-            trap 'rm -rf "$tmpdir"' EXIT
+            tmpdirs+=("$tmpdir")
 
             git clone "ssh://aur@aur.archlinux.org/${aur_name}.git" "$tmpdir/aur"
             rsync -a --delete --exclude ".git" "packages/$pkg/" "$tmpdir/aur/"
@@ -273,19 +274,13 @@ jobs:
             if [[ -z "$(git status --porcelain)" ]]; then
               echo "No AUR changes for $aur_name"
               popd >/dev/null
-              rm -rf "$tmpdir"
-              trap - EXIT
               continue
             fi
 
-            pkgver="$(awk -F= '/^pkgver=/{print $2; exit}' PKGBUILD)"
-            pkgrel="$(awk -F= '/^pkgrel=/{print $2; exit}' PKGBUILD)"
             git add -A
             git commit -m "upgpkg: ${aur_name} ${pkgver}-${pkgrel}"
             GIT_SSH_COMMAND='ssh -i ~/.ssh/aur -o IdentitiesOnly=yes' git push
             popd >/dev/null
 
-            rm -rf "$tmpdir"
-            trap - EXIT
             echo "Published $aur_name to AUR"
-          done < .changed-packages
+          done < .publish-plan

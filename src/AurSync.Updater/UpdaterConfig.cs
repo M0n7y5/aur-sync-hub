@@ -19,4 +19,7 @@ public sealed class UpdaterConfig
 
     [YamlMember(Alias = "isEnabled")]
     public bool? IsEnabled { get; set; }
+
+    [YamlMember(Alias = "verify_commands")]
+    public List<string>? VerifyCommands { get; set; }
 }

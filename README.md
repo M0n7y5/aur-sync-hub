@@ -58,6 +58,8 @@ isEnabled: false
 - The runtime image ships a prebuilt NativeAOT binary: `aur-sync-updater`.
 - YAML parsing uses YamlDotNet static context generation for AOT compatibility.
 - Concurrency is configurable with `--max-concurrency <n>` or repository variable `AUR_SYNC_MAX_CONCURRENCY`.
+- Verification package discovery is handled by the updater (`--discover-packages-json`) to keep workflow logic minimal.
+- AUR publish metadata planning is handled by the updater (`--build-publish-plan`) so workflow shell logic stays thin.
 
 ## Runtime image
 
@@ -78,6 +80,7 @@ After first successful image publish, set `AUR_SYNC_CONTAINER_IMAGE` and `AUR_SY
 - Local helper script: `scripts/test_local_install.sh`.
 - Local AOT builder: `scripts/build_updater_aot.sh`.
 - CI workflow: `.github/workflows/verify-package-install.yml`.
+  - Discovers verifiable packages dynamically (PRs: changed packages only; manual dispatch: optional single package override).
   - Builds each package as non-root in an Arch container.
   - Installs built package artifact in the ephemeral runner container.
   - Verifies package is installed (`pacman -Qi`) and runs a small smoke check.
