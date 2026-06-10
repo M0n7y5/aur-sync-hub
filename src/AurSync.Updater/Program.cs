@@ -170,8 +170,10 @@ internal static class Program
                 throw new InvalidOperationException("Config 'repo' must be in 'owner/repo' format");
             }
 
-            var latestTag = await GitHubReleaseClient.GetLatestReleaseTagAsync(http, cfg.Repo, cancellationToken);
-            var latestPkgver = GitHubReleaseClient.StripPrefix(latestTag, cfg.Prefix ?? string.Empty);
+            var latestTag = await GitHubReleaseClient.GetLatestReleaseTagAsync(
+                http, cfg.Repo, cfg.AllowPrerelease ?? false, cancellationToken);
+            var latestPkgver = GitHubReleaseClient.NormalizeVersion(
+                GitHubReleaseClient.StripPrefix(latestTag, cfg.Prefix ?? string.Empty));
             var currentPkgver = await PkgbuildParser.ReadAssignmentAsync(pkgbuildPath, "pkgver", cancellationToken);
 
             if (string.IsNullOrWhiteSpace(currentPkgver))

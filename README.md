@@ -47,9 +47,12 @@ verify_commands:
 | `source` | yes | Update source; currently supports `github_release`. |
 | `repo` | yes | Upstream GitHub repo in `owner/repo` format. |
 | `prefix` | no | String stripped from the upstream tag before writing `pkgver` (e.g. `v`). |
+| `allow_prerelease` | no | Defaults to `false`. When `true`, the newest published release is used even if marked prerelease (`/releases/latest` 404s on prerelease-only repos). |
 | `aur_package` | no | AUR package name override; defaults to the folder name. |
 | `isEnabled` | no | Defaults to `true`. Set `false` to skip checks and updates. |
 | `verify_commands` | no | Commands run by the [verify workflow](.github/workflows/verify-package-install.yml) after package installation. |
+
+Versions are normalized to pacman-legal `pkgver`s: hyphens become underscores (tag `v1.0.0-rc1` -> `pkgver=1.0.0_rc1`). PKGBUILDs that need the original tag reconstruct it with `_pkgtag="v${pkgver//_/-}"`.
 
 Disable example:
 
@@ -143,3 +146,4 @@ If `PKGBUILD` is missing, the updater skips that package.
 | --- | --- | --- | --- |
 | [`csharpier`](packages/csharpier/) | [aur/csharpier](https://aur.archlinux.org/packages/csharpier) | [belav/csharpier](https://github.com/belav/csharpier) | none |
 | [`plasticity-bin`](packages/plasticity-bin/) | [aur/plasticity-bin](https://aur.archlinux.org/packages/plasticity-bin) | [nkallen/plasticity](https://github.com/nkallen/plasticity) | `v` |
+| [`pipeasio`](packages/pipeasio/) | [aur/pipeasio](https://aur.archlinux.org/packages/pipeasio) | [M0n7y5/pipeasio](https://github.com/M0n7y5/pipeasio) | `v` (prereleases allowed) |

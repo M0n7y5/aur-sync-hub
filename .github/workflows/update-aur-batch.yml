@@ -327,7 +327,7 @@ jobs:
 
             git add -A
             git commit -m "upgpkg: ${aur_name} ${pkgver}-${pkgrel}"
-            GIT_SSH_COMMAND="$ssh_cmd" git push
+            GIT_SSH_COMMAND="$ssh_cmd" git push origin HEAD:master
             popd >/dev/null
 
             echo "Published $aur_name to AUR"

@@ -14,6 +14,9 @@ public sealed class UpdaterConfig
     [YamlMember(Alias = "prefix")]
     public string? Prefix { get; set; }
 
+    [YamlMember(Alias = "allow_prerelease")]
+    public bool? AllowPrerelease { get; set; }
+
     [YamlMember(Alias = "aur_package")]
     public string? AurPackage { get; set; }
 

@@ -22,16 +22,24 @@ internal static class GitHubReleaseClient
         return client;
     }
 
-    internal static async Task<string> GetLatestReleaseTagAsync(HttpClient http, string repo, CancellationToken cancellationToken)
+    internal static async Task<string> GetLatestReleaseTagAsync(
+        HttpClient http,
+        string repo,
+        bool allowPrerelease,
+        CancellationToken cancellationToken)
     {
-        var url = $"https://api.github.com/repos/{repo}/releases/latest";
+        var url = allowPrerelease
+            ? $"https://api.github.com/repos/{repo}/releases?per_page=10"
+            : $"https://api.github.com/repos/{repo}/releases/latest";
 
         using var response = await http.GetAsync(url, cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
 
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
-            throw new InvalidOperationException($"No latest release found for {repo}");
+            throw new InvalidOperationException(allowPrerelease
+                ? $"Repository not found: {repo}"
+                : $"No latest release found for {repo} (prerelease-only repos need allow_prerelease: true)");
         }
 
         if (!response.IsSuccessStatusCode)
@@ -40,19 +48,57 @@ internal static class GitHubReleaseClient
                 $"GitHub API error for {repo}: HTTP {(int)response.StatusCode} {response.ReasonPhrase} {body}".Trim());
         }
 
-        using var doc = JsonDocument.Parse(body);
-        if (!doc.RootElement.TryGetProperty("tag_name", out var tagElement) || tagElement.ValueKind != JsonValueKind.String)
+        return allowPrerelease
+            ? SelectTagFromReleaseList(body, repo)
+            : SelectTagFromLatestRelease(body, repo);
+    }
+
+    internal static string SelectTagFromLatestRelease(string json, string repo)
+    {
+        using var doc = JsonDocument.Parse(json);
+        return ReadTagName(doc.RootElement)
+            ?? throw new InvalidOperationException($"No valid tag_name in latest release for {repo}");
+    }
+
+    internal static string SelectTagFromReleaseList(string json, string repo)
+    {
+        using var doc = JsonDocument.Parse(json);
+        foreach (var release in doc.RootElement.EnumerateArray())
         {
-            throw new InvalidOperationException($"No valid tag_name in latest release for {repo}");
+            if (release.TryGetProperty("draft", out var draft) && draft.ValueKind == JsonValueKind.True)
+            {
+                continue;
+            }
+
+            if (ReadTagName(release) is { } tag)
+            {
+                return tag;
+            }
+        }
+
+        throw new InvalidOperationException($"No published release found for {repo}");
+    }
+
+    private static string? ReadTagName(JsonElement release)
+    {
+        if (!release.TryGetProperty("tag_name", out var tagElement) || tagElement.ValueKind != JsonValueKind.String)
+        {
+            return null;
         }
 
         var tag = tagElement.GetString();
-        if (string.IsNullOrWhiteSpace(tag))
-        {
-            throw new InvalidOperationException($"No valid tag_name in latest release for {repo}");
-        }
+        return string.IsNullOrWhiteSpace(tag) ? null : tag.Trim();
+    }
 
-        return tag.Trim();
+    /// <summary>
+    /// Maps an upstream version to a pacman-legal pkgver: hyphens are invalid
+    /// in pkgver, so "1.0.0-rc1" becomes "1.0.0_rc1" (which vercmp correctly
+    /// orders before "1.0.0"). PKGBUILDs reconstruct the tag with
+    /// `_pkgtag="v${pkgver//_/-}"`.
+    /// </summary>
+    internal static string NormalizeVersion(string version)
+    {
+        return version.Replace('-', '_');
     }
 
     internal static string StripPrefix(string tag, string prefix)
