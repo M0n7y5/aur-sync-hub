@@ -1,7 +1,14 @@
 namespace AurSync.Updater.Tests;
 
-public class PublishPlanBuilderTests
+public class PublishPlanBuilderTests : IDisposable
 {
+    private readonly DirectoryInfo _tempRoot = Directory.CreateTempSubdirectory("aursync-tests-");
+
+    public void Dispose()
+    {
+        _tempRoot.Delete(recursive: true);
+    }
+
     [Fact]
     public void ValidatePublishPlanField_AcceptsNormalString()
     {
@@ -31,7 +38,7 @@ public class PublishPlanBuilderTests
     [Fact]
     public async Task ReadChangedPackageNamesAsync_ReturnsEmptyForMissingFile()
     {
-        var file = new FileInfo(Path.Combine(Path.GetTempPath(), $"nonexistent-{Guid.NewGuid():N}"));
+        var file = new FileInfo(Path.Combine(_tempRoot.FullName, $"nonexistent-{Guid.NewGuid():N}"));
 
         var result = await PublishPlanBuilder.ReadChangedPackageNamesAsync(file, CancellationToken.None);
 
@@ -41,7 +48,7 @@ public class PublishPlanBuilderTests
     [Fact]
     public async Task ReadChangedPackageNamesAsync_ReadsAndDeduplicates()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"changed-{Guid.NewGuid():N}");
+        var path = Path.Combine(_tempRoot.FullName, $"changed-{Guid.NewGuid():N}");
         await File.WriteAllTextAsync(path, "beta\nalpha\nbeta\n\nalpha\n");
 
         var result = await PublishPlanBuilder.ReadChangedPackageNamesAsync(new FileInfo(path), CancellationToken.None);
@@ -52,7 +59,7 @@ public class PublishPlanBuilderTests
     [Fact]
     public async Task WritePublishPlanFileAsync_WritesEmptyForNoPlan()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"plan-{Guid.NewGuid():N}");
+        var path = Path.Combine(_tempRoot.FullName, $"plan-{Guid.NewGuid():N}");
 
         await PublishPlanBuilder.WritePublishPlanFileAsync(new FileInfo(path), [], CancellationToken.None);
 
@@ -63,7 +70,7 @@ public class PublishPlanBuilderTests
     [Fact]
     public async Task WritePublishPlanFileAsync_WritesTsvFormat()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"plan-{Guid.NewGuid():N}");
+        var path = Path.Combine(_tempRoot.FullName, $"plan-{Guid.NewGuid():N}");
         var items = new List<PublishPlanItem>
         {
             new("csharpier", "csharpier", "1.0.0", "1"),

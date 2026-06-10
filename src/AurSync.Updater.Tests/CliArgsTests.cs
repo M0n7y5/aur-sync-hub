@@ -12,6 +12,7 @@ public class CliArgsTests
         Assert.Equal(string.Empty, options.ChangedPathsFile);
         Assert.Equal(".publish-plan", options.PublishPlanFile);
         Assert.Equal(string.Empty, options.PackageFilter);
+        Assert.Equal(string.Empty, options.PrintVerifyCommands);
         Assert.False(options.DryRun);
         Assert.False(options.DiscoverPackagesJson);
         Assert.False(options.BuildPublishPlan);
@@ -27,6 +28,7 @@ public class CliArgsTests
             "--changed-paths-file", "/custom/paths",
             "--publish-plan-file", "/custom/plan",
             "--package-filter", "my-package",
+            "--print-verify-commands", "my-package",
             "--dry-run",
             "--max-concurrency", "4",
         ]);
@@ -36,6 +38,7 @@ public class CliArgsTests
         Assert.Equal("/custom/paths", options.ChangedPathsFile);
         Assert.Equal("/custom/plan", options.PublishPlanFile);
         Assert.Equal("my-package", options.PackageFilter);
+        Assert.Equal("my-package", options.PrintVerifyCommands);
         Assert.True(options.DryRun);
         Assert.Equal(4, options.MaxConcurrency);
     }

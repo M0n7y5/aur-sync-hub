@@ -206,12 +206,6 @@ jobs:
           set -euo pipefail
           command -v "$UPDATER_BIN"
 
-      - name: Clear package tree before artifact restore
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf packages .changed-packages
-
       - name: Download updater outputs
         uses: actions/download-artifact@v4
         with:
@@ -344,7 +338,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git add packages/*/PKGBUILD packages/*/.SRCINFO packages/*/updater.yaml
+          git add packages/
           if git diff --cached --quiet; then
             echo "No git diff after applying updater output"
             exit 0

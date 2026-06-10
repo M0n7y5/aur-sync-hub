@@ -24,8 +24,17 @@ internal static class ConfigReader
         }
     }
 
-    internal static bool GetEffectiveIsEnabled(UpdaterConfig config)
+    internal static List<string> GetVerifyCommands(UpdaterConfig config)
     {
-        return config.IsEnabled ?? true;
+        var commands = new List<string>();
+        foreach (var raw in config.VerifyCommands ?? [])
+        {
+            var trimmed = raw?.Trim();
+            if (!string.IsNullOrEmpty(trimmed))
+            {
+                commands.Add(trimmed);
+            }
+        }
+        return commands;
     }
 }

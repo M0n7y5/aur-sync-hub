@@ -183,21 +183,12 @@ jobs:
           set -euo pipefail
           pacman -Qi "$PKG"
 
-          yaml_file="$GITHUB_WORKSPACE/packages/$PKG/updater.yaml"
-          if [[ ! -f "$yaml_file" ]]; then
-            echo "No updater.yaml found, skipping custom verify commands"
-            exit 0
-          fi
-
-          # Parse verify_commands list from updater.yaml (lightweight awk, no yq dependency)
-          mapfile -t verify_cmds < <(
-            awk '/^verify_commands:/{found=1; next} found && /^  - /{sub(/^  - /, ""); print; next} found{exit}' "$yaml_file"
-          )
-
-          if (( ${#verify_cmds[@]} == 0 )); then
+          verify_output="$("$UPDATER_BIN" --print-verify-commands "$PKG" --packages-root "$GITHUB_WORKSPACE/packages")"
+          if [[ -z "$verify_output" ]]; then
             echo "No verify_commands defined, skipping"
             exit 0
           fi
+          mapfile -t verify_cmds <<< "$verify_output"
 
           for cmd in "${verify_cmds[@]}"; do
             echo "Running verify command: $cmd"

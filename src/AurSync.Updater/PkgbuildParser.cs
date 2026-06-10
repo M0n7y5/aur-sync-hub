@@ -29,8 +29,7 @@ internal static partial class PkgbuildParser
                 continue;
             }
 
-            var value = match.Groups[3].Value.Trim();
-            return StripQuotes(value).Value;
+            return ParseValue(match.Groups[3].Value.Trim()).Value;
         }
 
         return null;
@@ -58,9 +57,9 @@ internal static partial class PkgbuildParser
                 continue;
             }
 
-            var (_, quote) = StripQuotes(match.Groups[3].Value.Trim());
+            var (_, quote, suffix) = ParseValue(match.Groups[3].Value.Trim());
 
-            var updated = $"{match.Groups[1].Value}{key}={quote}{newValue}{quote}";
+            var updated = $"{match.Groups[1].Value}{key}={quote}{newValue}{quote}{suffix}";
             var changed = !string.Equals(raw, updated, StringComparison.Ordinal);
             lines[i] = updated;
             return changed;
@@ -91,21 +90,32 @@ internal static partial class PkgbuildParser
     }
 
     /// <summary>
-    /// Strips surrounding matching quotes (single or double) from a value.
-    /// Returns the stripped value and the quote character used (empty string if none).
+    /// Parses a raw assignment right-hand side into the value, its quote style,
+    /// and any trailing suffix (whitespace + comment) to preserve on rewrite.
+    /// Quoted: value is the text inside the first matching quote pair.
+    /// Unquoted: value ends at the first whitespace character (bash starts
+    /// comments only at word boundaries, so "1.2.3#x" stays intact).
     /// </summary>
-    internal static (string Value, string Quote) StripQuotes(string raw)
+    internal static (string Value, string Quote, string Suffix) ParseValue(string raw)
     {
-        if (raw.Length >= 2)
+        if (raw.Length >= 2 && (raw[0] == '"' || raw[0] == '\''))
         {
-            var first = raw[0];
-            var last = raw[^1];
-            if ((first == '"' && last == '"') || (first == '\'' && last == '\''))
+            var closing = raw.IndexOf(raw[0], 1);
+            if (closing > 0)
             {
-                return (raw[1..^1], first.ToString());
+                var quote = raw[0] == '"' ? "\"" : "'";
+                return (raw[1..closing], quote, raw[(closing + 1)..]);
             }
         }
 
-        return (raw, string.Empty);
+        for (var i = 0; i < raw.Length; i++)
+        {
+            if (char.IsWhiteSpace(raw[i]))
+            {
+                return (raw[..i], string.Empty, raw[i..]);
+            }
+        }
+
+        return (raw, string.Empty, string.Empty);
     }
 }

@@ -1,7 +1,14 @@
 namespace AurSync.Updater.Tests;
 
-public class PackageDiscoveryTests
+public class PackageDiscoveryTests : IDisposable
 {
+    private readonly DirectoryInfo _tempRoot = Directory.CreateTempSubdirectory("aursync-tests-");
+
+    public void Dispose()
+    {
+        _tempRoot.Delete(recursive: true);
+    }
+
     #region TryExtractPackageNameFromPath
 
     [Theory]
@@ -32,7 +39,7 @@ public class PackageDiscoveryTests
     [Fact]
     public void GetPackageDirs_ReturnsEmptyForNonExistentRoot()
     {
-        var root = new DirectoryInfo(Path.Combine(Path.GetTempPath(), $"nonexistent-{Guid.NewGuid():N}"));
+        var root = new DirectoryInfo(Path.Combine(_tempRoot.FullName, $"nonexistent-{Guid.NewGuid():N}"));
 
         var result = PackageDiscovery.GetPackageDirs(root, string.Empty);
 
@@ -103,9 +110,9 @@ public class PackageDiscoveryTests
 
     #region Helpers
 
-    private static DirectoryInfo CreateTempPackagesRoot(params string[] packageNames)
+    private DirectoryInfo CreateTempPackagesRoot(params string[] packageNames)
     {
-        var root = Path.Combine(Path.GetTempPath(), $"pkg-test-{Guid.NewGuid():N}");
+        var root = Path.Combine(_tempRoot.FullName, $"pkg-test-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
         foreach (var name in packageNames)
         {
@@ -114,9 +121,9 @@ public class PackageDiscoveryTests
         return new DirectoryInfo(root);
     }
 
-    private static DirectoryInfo CreateTempDirWithFiles(params string[] fileNames)
+    private DirectoryInfo CreateTempDirWithFiles(params string[] fileNames)
     {
-        var dir = Path.Combine(Path.GetTempPath(), $"pkg-test-{Guid.NewGuid():N}");
+        var dir = Path.Combine(_tempRoot.FullName, $"pkg-test-{Guid.NewGuid():N}");
         Directory.CreateDirectory(dir);
         foreach (var name in fileNames)
         {

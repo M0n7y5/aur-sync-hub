@@ -7,99 +7,129 @@ internal static class Program
 {
     private static async Task<int> Main(string[] args)
     {
-        return await RunAsync(args, CancellationToken.None);
-    }
+        using var cts = new CancellationTokenSource();
+        Console.CancelKeyPress += (_, e) =>
+        {
+            e.Cancel = true;
+            cts.Cancel();
+        };
+        var cancellationToken = cts.Token;
 
-    private static async Task<int> RunAsync(string[] args, CancellationToken cancellationToken)
-    {
-        UpdaterOptions options;
         try
         {
-            options = CliArgs.Parse(args);
-        }
-        catch (ArgumentException ex)
-        {
-            Log($"[error] {ex.Message}");
-            return 2;
-        }
+            UpdaterOptions options;
+            try
+            {
+                options = CliArgs.Parse(args);
+            }
+            catch (ArgumentException ex)
+            {
+                Log($"[error] {ex.Message}");
+                return 2;
+            }
 
-        var packagesRoot = new DirectoryInfo(options.PackagesRoot);
+            var packagesRoot = new DirectoryInfo(options.PackagesRoot);
 
-        if (options.DiscoverPackagesJson)
-        {
-            var discoveredPackages = await PackageDiscovery.DiscoverPackagesForVerifyAsync(
-                packagesRoot,
-                options.PackageFilter,
-                options.ChangedPathsFile,
-                cancellationToken);
-            var discoveredPackagesJson = JsonSerializer.Serialize(
-                discoveredPackages.ToArray(),
-                UpdaterJsonContext.Default.StringArray);
-            Log(discoveredPackagesJson);
+            if (!string.IsNullOrWhiteSpace(options.PrintVerifyCommands))
+            {
+                var packageName = options.PrintVerifyCommands.Trim();
+                var cfgFile = new FileInfo(Path.Combine(packagesRoot.FullName, packageName, "updater.yaml"));
+                if (!cfgFile.Exists)
+                {
+                    Log($"[error] no updater.yaml for package: {packageName}");
+                    return 1;
+                }
+
+                var verifyCfg = await ConfigReader.ReadConfigAsync(cfgFile, cancellationToken);
+                foreach (var command in ConfigReader.GetVerifyCommands(verifyCfg))
+                {
+                    Console.WriteLine(command);
+                }
+                return 0;
+            }
+
+            if (options.DiscoverPackagesJson)
+            {
+                var discoveredPackages = await PackageDiscovery.DiscoverPackagesForVerifyAsync(
+                    packagesRoot,
+                    options.PackageFilter,
+                    options.ChangedPathsFile,
+                    cancellationToken);
+                var discoveredPackagesJson = JsonSerializer.Serialize(
+                    discoveredPackages.ToArray(),
+                    UpdaterJsonContext.Default.StringArray);
+                Log(discoveredPackagesJson);
+                return 0;
+            }
+
+            if (options.BuildPublishPlan)
+            {
+                var publishPlan = await PublishPlanBuilder.BuildPublishPlanAsync(
+                    packagesRoot,
+                    new FileInfo(options.ChangedFile),
+                    cancellationToken);
+                var publishPlanFile = new FileInfo(options.PublishPlanFile);
+                await PublishPlanBuilder.WritePublishPlanFileAsync(publishPlanFile, publishPlan, cancellationToken);
+                Log($"Done. Publish plan entries: {publishPlan.Count}");
+                return 0;
+            }
+
+            var changedFile = new FileInfo(options.ChangedFile);
+            var packageDirs = PackageDiscovery.GetPackageDirs(packagesRoot, options.PackageFilter);
+
+            if (!string.IsNullOrWhiteSpace(options.PackageFilter) && packageDirs.Count == 0)
+            {
+                Log($"[error] package filter matched nothing: {options.PackageFilter}");
+                return 2;
+            }
+
+            using var http = GitHubReleaseClient.CreateGithubClient();
+
+            var maxConcurrency = ResolveMaxConcurrency(options.MaxConcurrency);
+            Log($"Using max concurrency: {maxConcurrency}");
+            var parallelOptions = new ParallelOptions
+            {
+                MaxDegreeOfParallelism = maxConcurrency,
+                CancellationToken = cancellationToken,
+            };
+
+            var resultBag = new ConcurrentBag<PackageResult>();
+            await Parallel.ForEachAsync(packageDirs, parallelOptions, async (packageDir, ct) =>
+            {
+                var result = await ProcessPackageAsync(packageDir, options, http, ct);
+                resultBag.Add(result);
+            });
+
+            var results = resultBag.ToArray();
+
+            foreach (var result in results.OrderBy(r => r.PackageName, StringComparer.Ordinal))
+            {
+                Log(result.Message);
+            }
+
+            var changedPackages = results
+                .Where(r => r.Outcome == PackageOutcome.Changed)
+                .Select(r => r.PackageName)
+                .OrderBy(name => name, StringComparer.Ordinal)
+                .ToList();
+
+            await WriteChangedFileAsync(changedFile, changedPackages, cancellationToken);
+
+            var errorCount = results.Count(r => r.Outcome == PackageOutcome.Error);
+            if (errorCount > 0)
+            {
+                Log($"Completed with {errorCount} error(s)");
+                return 1;
+            }
+
+            Log($"Done. Changed packages: {changedPackages.Count}");
             return 0;
         }
-
-        if (options.BuildPublishPlan)
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
-            var publishPlan = await PublishPlanBuilder.BuildPublishPlanAsync(
-                packagesRoot,
-                new FileInfo(options.ChangedFile),
-                cancellationToken);
-            var publishPlanFile = new FileInfo(options.PublishPlanFile);
-            await PublishPlanBuilder.WritePublishPlanFileAsync(publishPlanFile, publishPlan, cancellationToken);
-            Log($"Done. Publish plan entries: {publishPlan.Count}");
-            return 0;
+            Log("[error] cancelled");
+            return 130;
         }
-
-        var changedFile = new FileInfo(options.ChangedFile);
-        var packageDirs = PackageDiscovery.GetPackageDirs(packagesRoot, options.PackageFilter);
-
-        using var http = GitHubReleaseClient.CreateGithubClient();
-
-        var maxConcurrency = ResolveMaxConcurrency(options.MaxConcurrency);
-        Log($"Using max concurrency: {maxConcurrency}");
-        var parallelOptions = new ParallelOptions
-        {
-            MaxDegreeOfParallelism = maxConcurrency,
-            CancellationToken = cancellationToken,
-        };
-
-        var resultBag = new ConcurrentBag<PackageResult>();
-        await Parallel.ForEachAsync(packageDirs, parallelOptions, async (packageDir, ct) =>
-        {
-            var result = await ProcessPackageAsync(packageDir, options, http, ct);
-            resultBag.Add(result);
-        });
-
-        var results = resultBag.ToArray();
-
-        foreach (var result in results.OrderBy(r => r.PackageName, StringComparer.Ordinal))
-        {
-            Log(result.Message);
-        }
-
-        var changedPackages = results
-            .Where(r => r.Changed)
-            .Select(r => r.PackageName)
-            .OrderBy(name => name, StringComparer.Ordinal)
-            .ToList();
-
-        await WriteChangedFileAsync(changedFile, changedPackages, cancellationToken);
-
-        if (!string.IsNullOrWhiteSpace(options.PackageFilter) && packageDirs.Count == 0)
-        {
-            Log($"[warn] package filter matched nothing: {options.PackageFilter}");
-        }
-
-        var errorCount = results.Count(r => r.Outcome == PackageOutcome.Error);
-        if (errorCount > 0)
-        {
-            Log($"Completed with {errorCount} error(s)");
-            return 1;
-        }
-
-        Log($"Done. Changed packages: {changedPackages.Count}");
-        return 0;
     }
 
     private static async Task<PackageResult> ProcessPackageAsync(
@@ -125,8 +155,7 @@ internal static class Program
         try
         {
             var cfg = await ConfigReader.ReadConfigAsync(cfgPath, cancellationToken);
-            var enabled = ConfigReader.GetEffectiveIsEnabled(cfg);
-            if (!enabled)
+            if (!(cfg.IsEnabled ?? true))
             {
                 return PackageResult.Skip(packageName, $"[skip] {packageName}: disabled in updater.yaml (isEnabled: false)");
             }

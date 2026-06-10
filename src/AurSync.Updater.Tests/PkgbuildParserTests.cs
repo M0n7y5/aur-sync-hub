@@ -1,24 +1,36 @@
 namespace AurSync.Updater.Tests;
 
-public class PkgbuildParserTests
+public class PkgbuildParserTests : IDisposable
 {
-    #region StripQuotes
+    private readonly DirectoryInfo _tempRoot = Directory.CreateTempSubdirectory("aursync-tests-");
+
+    public void Dispose()
+    {
+        _tempRoot.Delete(recursive: true);
+    }
+
+    #region ParseValue
 
     [Theory]
-    [InlineData("\"hello\"", "hello", "\"")]
-    [InlineData("'hello'", "hello", "'")]
-    [InlineData("hello", "hello", "")]
-    [InlineData("\"\"", "", "\"")]
-    [InlineData("''", "", "'")]
-    [InlineData("a", "a", "")]
-    [InlineData("", "", "")]
-    [InlineData("\"mismatched'", "\"mismatched'", "")]
-    [InlineData("'mismatched\"", "'mismatched\"", "")]
-    public void StripQuotes_ReturnsExpected(string input, string expectedValue, string expectedQuote)
+    [InlineData("\"hello\"", "hello", "\"", "")]
+    [InlineData("'hello'", "hello", "'", "")]
+    [InlineData("hello", "hello", "", "")]
+    [InlineData("\"\"", "", "\"", "")]
+    [InlineData("''", "", "'", "")]
+    [InlineData("a", "a", "", "")]
+    [InlineData("", "", "", "")]
+    [InlineData("\"mismatched'", "\"mismatched'", "", "")]
+    [InlineData("'mismatched\"", "'mismatched\"", "", "")]
+    [InlineData("1.2.3 # note", "1.2.3", "", " # note")]
+    [InlineData("\"1.2.3\" # note", "1.2.3", "\"", " # note")]
+    [InlineData("'1.2.3' # note", "1.2.3", "'", " # note")]
+    [InlineData("1.2.3#hash", "1.2.3#hash", "", "")]
+    public void ParseValue_ReturnsExpected(string input, string expectedValue, string expectedQuote, string expectedSuffix)
     {
-        var (value, quote) = PkgbuildParser.StripQuotes(input);
+        var (value, quote, suffix) = PkgbuildParser.ParseValue(input);
         Assert.Equal(expectedValue, value);
         Assert.Equal(expectedQuote, quote);
+        Assert.Equal(expectedSuffix, suffix);
     }
 
     #endregion
@@ -89,6 +101,16 @@ public class PkgbuildParserTests
     public async Task ReadAssignmentAsync_HandlesLeadingWhitespace()
     {
         var file = await WriteTempPkgbuild("  pkgver=1.2.3\n");
+
+        var result = await PkgbuildParser.ReadAssignmentAsync(file, "pkgver", CancellationToken.None);
+
+        Assert.Equal("1.2.3", result);
+    }
+
+    [Fact]
+    public async Task ReadAssignmentAsync_StripsTrailingComment()
+    {
+        var file = await WriteTempPkgbuild("pkgver=1.2.3 # bumped manually\n");
 
         var result = await PkgbuildParser.ReadAssignmentAsync(file, "pkgver", CancellationToken.None);
 
@@ -174,13 +196,24 @@ public class PkgbuildParserTests
         Assert.Equal("pkgver=2.0.0", lines[1]);
     }
 
+    [Fact]
+    public void ReplaceAssignment_PreservesTrailingComment()
+    {
+        var lines = new List<string> { "pkgver=1.0.0 # keep me" };
+
+        var changed = PkgbuildParser.ReplaceAssignment(lines, "pkgver", "2.0.0");
+
+        Assert.True(changed);
+        Assert.Equal("pkgver=2.0.0 # keep me", lines[0]);
+    }
+
     #endregion
 
     #region Helpers
 
-    private static async Task<FileInfo> WriteTempPkgbuild(string content)
+    private async Task<FileInfo> WriteTempPkgbuild(string content)
     {
-        var path = Path.Combine(Path.GetTempPath(), $"pkgbuild-test-{Guid.NewGuid():N}");
+        var path = Path.Combine(_tempRoot.FullName, $"pkgbuild-{Guid.NewGuid():N}");
         await File.WriteAllTextAsync(path, content);
         return new FileInfo(path);
     }

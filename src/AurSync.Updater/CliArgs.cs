@@ -4,11 +4,12 @@ namespace AurSync.Updater;
 
 internal sealed class UpdaterOptions
 {
-    public required string PackagesRoot { get; set; }
-    public required string ChangedFile { get; set; }
-    public required string ChangedPathsFile { get; set; }
-    public required string PublishPlanFile { get; set; }
-    public required string PackageFilter { get; set; }
+    public string PackagesRoot { get; set; } = "packages";
+    public string ChangedFile { get; set; } = ".changed-packages";
+    public string ChangedPathsFile { get; set; } = string.Empty;
+    public string PublishPlanFile { get; set; } = ".publish-plan";
+    public string PackageFilter { get; set; } = string.Empty;
+    public string PrintVerifyCommands { get; set; } = string.Empty;
     public bool DryRun { get; set; }
     public bool DiscoverPackagesJson { get; set; }
     public bool BuildPublishPlan { get; set; }
@@ -19,17 +20,7 @@ internal static class CliArgs
 {
     internal static UpdaterOptions Parse(string[] args)
     {
-        var options = new UpdaterOptions
-        {
-            PackagesRoot = "packages",
-            ChangedFile = ".changed-packages",
-            ChangedPathsFile = string.Empty,
-            PublishPlanFile = ".publish-plan",
-            PackageFilter = string.Empty,
-            DryRun = false,
-            DiscoverPackagesJson = false,
-            BuildPublishPlan = false,
-        };
+        var options = new UpdaterOptions();
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -50,6 +41,9 @@ internal static class CliArgs
                     break;
                 case "--package-filter":
                     options.PackageFilter = ReadValue(args, ref i, arg);
+                    break;
+                case "--print-verify-commands":
+                    options.PrintVerifyCommands = ReadValue(args, ref i, arg);
                     break;
                 case "--dry-run":
                     options.DryRun = true;

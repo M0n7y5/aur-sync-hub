@@ -74,9 +74,8 @@ internal static class PackageDiscovery
 
     internal static bool HasPackageSyncInputs(DirectoryInfo packageDir)
     {
-        var cfgPath = new FileInfo(Path.Combine(packageDir.FullName, "updater.yaml"));
-        var pkgbuildPath = new FileInfo(Path.Combine(packageDir.FullName, "PKGBUILD"));
-        return cfgPath.Exists && pkgbuildPath.Exists;
+        return File.Exists(Path.Combine(packageDir.FullName, "updater.yaml"))
+            && File.Exists(Path.Combine(packageDir.FullName, "PKGBUILD"));
     }
 
     private static async Task<HashSet<string>> ReadChangedPackageNamesFromPathsFileAsync(FileInfo changedPathsFile, CancellationToken cancellationToken)
