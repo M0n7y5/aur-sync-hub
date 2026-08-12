@@ -2,8 +2,8 @@
 # shellcheck shell=bash disable=SC2034,SC2154
 
 pkgname=pipeasio
-pkgver=1.2.3
-pkgrel=2
+pkgver=1.4.3
+pkgrel=1
 # Upstream tags use semver prerelease hyphens (v1.0.0-rc1); pkgver maps '-' to '_'.
 _pkgtag="v${pkgver//_/-}"
 pkgdesc="ASIO driver for Wine that talks directly to PipeWire (no libjack dependency)"
@@ -18,7 +18,7 @@ makedepends=(cmake ninja)
 options=('!strip' '!debug' '!lto')
 _pkgsrc="${pkgname}-${_pkgtag#v}"
 source=("${_pkgsrc}.tar.gz::${url}/archive/refs/tags/${_pkgtag}.tar.gz")
-b2sums=('98dd6418aab29281dd3ca949dcd159c5c0e2c63af7b8ce0e6336cbbc12276c08f0d709019154644beb1cc3a03d24e6d735e2505bfa4e481ea81e9e039dc0df35')
+b2sums=('9748d9c61360777b0ce443a1a41ac8acddcddaae801c823e71986d2dcda7d23b270896d8da989c3735aac01ac56e523e662a44a5859a26e062bc04b78d152e82')
 
 build() {
   cd "${srcdir}/${_pkgsrc}"
