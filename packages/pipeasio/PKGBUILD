@@ -11,9 +11,11 @@ arch=('x86_64')
 url="https://github.com/M0n7y5/pipeasio"
 license=('GPL-3.0-or-later')
 # libpipewire carries the linked libpipewire-0.3.so.0; pipewire is the daemon
-# the driver connects to at runtime.
-depends=(wine libpipewire pipewire qt6-base hicolor-icon-theme)
-makedepends=(cmake ninja)
+# the driver connects to at runtime. yaml-cpp, libarchive and zlib are linked by
+# pipeasio-manage, the manager backend the panel runs.
+depends=(wine libpipewire pipewire qt6-base hicolor-icon-theme yaml-cpp libarchive zlib)
+# mingw-w64-gcc builds the PE front end and the installation probe.
+makedepends=(cmake ninja mingw-w64-gcc)
 # !lto: winebuild reads symbols from the .o files; LTO bytecode objects break it.
 options=('!strip' '!debug' '!lto')
 _pkgsrc="${pkgname}-${_pkgtag#v}"
@@ -33,8 +35,8 @@ build() {
 package() {
   cd "${srcdir}/${_pkgsrc}"
 
-  # Upstream installs the Wine arch layout, both unified-name symlinks, the
-  # register helper, the panel, its desktop entry and icon.
+  # Upstream installs the Wine arch layout, the register helper, the manager
+  # backend and its installation probe, the panel, its desktop entry and icon.
   DESTDIR="${pkgdir}" cmake --install build
 
   install -Dm644 COPYING -t "${pkgdir}/usr/share/licenses/${pkgname}"

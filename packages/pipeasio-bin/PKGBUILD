@@ -10,7 +10,9 @@ pkgdesc="ASIO driver for Wine that talks directly to PipeWire (no libjack depend
 arch=('x86_64')
 url="https://github.com/M0n7y5/pipeasio"
 license=('GPL-3.0-or-later')
-depends=(wine libpipewire pipewire qt6-base hicolor-icon-theme)
+# yaml-cpp, libarchive and zlib are linked by pipeasio-manage, the manager
+# backend the panel runs.
+depends=(wine libpipewire pipewire qt6-base hicolor-icon-theme yaml-cpp libarchive zlib)
 provides=("pipeasio=${pkgver}")
 conflicts=(pipeasio)
 # !strip: the PE halves are not ELF, and stripping the .so halves breaks the
@@ -27,7 +29,6 @@ package() {
   cd "${srcdir}"
 
   # The tarball is rooted at the install prefix: bin/, lib/, share/.
-  # cp -a keeps the pipeasio.dll / pipeasio.dll.so symlinks Wine 10+ looks up.
   install -dm755 "${pkgdir}/usr"
   cp -a --no-preserve=ownership bin lib share "${pkgdir}/usr/"
 

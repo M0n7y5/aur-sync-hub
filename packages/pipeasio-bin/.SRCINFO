@@ -10,6 +10,9 @@ pkgbase = pipeasio-bin
 	depends = pipewire
 	depends = qt6-base
 	depends = hicolor-icon-theme
+	depends = yaml-cpp
+	depends = libarchive
+	depends = zlib
 	provides = pipeasio=1.8.0
 	conflicts = pipeasio
 	options = !strip
