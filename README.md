@@ -147,3 +147,4 @@ If `PKGBUILD` is missing, the updater skips that package.
 | [`csharpier`](packages/csharpier/) | [aur/csharpier](https://aur.archlinux.org/packages/csharpier) | [belav/csharpier](https://github.com/belav/csharpier) | none |
 | [`plasticity-bin`](packages/plasticity-bin/) | [aur/plasticity-bin](https://aur.archlinux.org/packages/plasticity-bin) | [nkallen/plasticity](https://github.com/nkallen/plasticity) | `v` |
 | [`pipeasio`](packages/pipeasio/) | [aur/pipeasio](https://aur.archlinux.org/packages/pipeasio) | [M0n7y5/pipeasio](https://github.com/M0n7y5/pipeasio) | `v` (prereleases allowed) |
+| [`onedev-tod`](packages/onedev-tod/) | [aur/onedev-tod](https://aur.archlinux.org/packages/onedev-tod) | [theonedev/tod](https://github.com/theonedev/tod) | `v` |
